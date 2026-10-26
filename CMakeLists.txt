@@ -6,8 +6,10 @@ set(CMAKE_CXX_STANDARD 20)
 add_executable(flac main.cpp
         streaminfo.h
         streaminfo.cpp
-        Endianness.h
+        endianness.h
         vorbis.h
         vorbis.cpp
+        bitsreader.h
+        bitsreader.cpp
 )
 target_compile_options(flac PRIVATE -O0 -pedantic-errors -Wall -Wextra -Werror)

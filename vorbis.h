@@ -8,8 +8,6 @@
 #include <fstream>
 #include <vector>
 
-#endif //FLAC_VORBIS_H
-
 namespace Vorbis {
     struct Data {
         std::string vendor{};
@@ -18,3 +16,5 @@ namespace Vorbis {
 
     Data handleVorbisComment(std::ifstream &file);
 }
+
+#endif //FLAC_VORBIS_H

@@ -4,10 +4,11 @@
 #include <cstdint>
 #include <bitset>
 #include <vector>
-
+#include <bit>
 #include "streaminfo.h"
 #include "endianness.h"
 #include "vorbis.h"
+#include "bitsreader.h"
 
 constexpr std::array<unsigned char, 4> flac{'f', 'L', 'a', 'C'};
 
@@ -30,11 +31,6 @@ struct Metadata {
     std::uint32_t nextMetadataBlock{};
     std::uint32_t size{};
 };
-
-struct Frame {
-    std::array<unsigned char, 8> header{};
-};
-
 
 Metadata readNextMetadataBlock(std::ifstream &file) {
     std::array<unsigned char, 4> metadataBytes{};
@@ -91,9 +87,11 @@ int main(const int argc, char *argv[]) {
                 break;
             }
             case application: {
+                file.seekg(currentMetadata.size, std::ios::cur);
                 break;
             }
             case seekTable: {
+                file.seekg(currentMetadata.size, std::ios::cur);
                 break;
             }
             case vorbisComment: {
@@ -101,14 +99,16 @@ int main(const int argc, char *argv[]) {
                 break;
             }
             case cuesheet: {
+                file.seekg(currentMetadata.size, std::ios::cur);
                 break;
             }
             case picture: {
+                file.seekg(currentMetadata.size, std::ios::cur);
                 break;
             }
             default: {
                 std::cerr << "unknown metadata block: " << currentMetadata.nextMetadataBlock << std::endl;
-                break;
+                return -1;
             }
         }
         if (currentMetadata.isLastMetadataBlock) break;
@@ -117,6 +117,7 @@ int main(const int argc, char *argv[]) {
     }
 
     std::cout << vorbisData.vendor << "\n";
+
     for (const auto &s: vorbisData.fields) {
         std::cout << s << '\n';
     }
@@ -128,27 +129,89 @@ int main(const int argc, char *argv[]) {
     std::cout << "Min/max bloc sizes: " << info.minBlockSize << "/" << info.maxBlockSize << '\n';
     std::cout << "Min/max frame sizes: " << info.minFrameSize << "/" << info.maxFrameSize << '\n';
     std::cout << "md5: ";
+
     for (const auto &c: info.md5) {
         std::cout << std::hex << static_cast<std::int32_t>(c) << " ";
     }
 
-    std::array<unsigned char, 4> header{};
+    std::cout << std::endl;
 
-    file.read(reinterpret_cast<char *>(&header), sizeof(header));
+    BitsReader reader{file};
 
-    [[maybe_unused]] auto packedValues = fromBigEndianness<std::uint32_t>(header);
+    reader.resetCrc();
 
-    [[maybe_unused]] auto frameSync = (packedValues >> 17) & 0x7FFF;
-    [[maybe_unused]] auto strategy = (packedValues >> 16) & 0x0001;
-    [[maybe_unused]] auto blockSize = (packedValues >> 12) & 0xF;
-    [[maybe_unused]] auto sampleRate = (packedValues >> 8) & 0xF;
-    [[maybe_unused]] auto channels = (packedValues >> 4) & 0xF;
-    [[maybe_unused]] auto bitDepth = (packedValues >> 1) & 0x7;
+    if (const auto frameSyncFromReader = reader.readBits(15); frameSyncFromReader != 0x7FFC) {
+        std::cerr << "Sync code is corrupted" << '\n';
+        return -1;
+    }
+    [[maybe_unused]] const auto strategyFromReader = reader.readBits(1);
+
+    [[maybe_unused]] const auto blockSize = reader.readBits(4);
+    if (blockSize == 6 || blockSize == 7) {
+        // six seven (-_-) heheheh
+        std::cerr << "Can't handle blockSize " << blockSize << '\n';
+        return -1;
+    }
+
+    [[maybe_unused]] const auto sampleRate = reader.readBits(4);
+    if (sampleRate == 12 || sampleRate == 13 || sampleRate == 14) {
+        std::cerr << "Can't handle sampleRate " << sampleRate << '\n';
+        return -1;
+    }
+
+    [[maybe_unused]] const auto channels = reader.readBits(4);
+    [[maybe_unused]] const auto bitDepth = reader.readBits(3);
+
+    if (const auto reservedBit = reader.readBits(1); reservedBit != 0) {
+        std::cerr << "Frame header reserved bit equals to " << reservedBit << '\n';
+        return -1;
+    }
+
+    // first byte of the coded number: count of leading 1s = total byte count (0 means a single byte)
+    const auto frameNumberFirstByte = static_cast<std::uint8_t>(reader.readBits(8));
+    const std::int32_t codedNumbersSize{std::countl_one(frameNumberFirstByte)};
+
+    if (codedNumbersSize == 1 || codedNumbersSize > 7) {
+        std::cerr << "frame number is corrupted" << '\n';
+        return -1;
+    }
+
+    // continuation bytes (10xxxxxx each), max 6 bytes = 48 bits
+    if (codedNumbersSize > 1) {
+        reader.readBits((codedNumbersSize - 1) * 8);
+    }
+
+    const auto crc = reader.getCrc8();
+
+    if (auto crcChecksum = reader.readBits(8); crcChecksum != crc) {
+        std::cerr << "frame crc " << static_cast<std::uint16_t>(crc) << " is not matches with calculated " <<
+                static_cast<std::uint16_t>(crcChecksum) << '\n';
+    }
+
+    if (const auto subframeMandatoryBit = reader.readBits(1); subframeMandatoryBit != 0) {
+        std::cerr << "Subframe is corrupted " << '\n';
+        return -1;
+    }
+
+    [[maybe_unused]] const auto subframeType = reader.readBits(6);
+
+    const auto subframeUsesWastedBits = reader.readBits(1);
+
+    [[maybe_unused]] std::uint32_t wastedBits{0};
+
+    if (subframeUsesWastedBits != 0) {
+        wastedBits = reader.readUnary() + 1;
+        std::cerr << "Subframe reported wasted bits, handle it " << '\n';
+    }
+
+    
 
 
-
-    // file.read(reinterpret_cast<char *>(&blockSizeSampleRate), sizeof(blockSizeSampleRate));
-
+    // std::uint8_t subframeHeaderBeg{};
+    // file.read(reinterpret_cast<char *>(&subframeHeaderBeg), sizeof(subframeHeaderBeg));
+    //
+    // [[maybe_unused]] auto const subframeHeaderStart = (subframeHeaderBeg >> 31) & calculateMask(1);
+    // [[maybe_unused]] auto const subframeType = (subframeHeaderBeg >> 25) & calculateMask(6);
 
     return 0;
 }

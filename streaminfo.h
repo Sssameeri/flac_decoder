@@ -8,8 +8,6 @@
 #include <fstream>
 #include <array>
 
-#endif //FLAC_STREAMINFO_H
-
 namespace Stream {
     struct Info {
         std::uint16_t minBlockSize{};
@@ -25,3 +23,6 @@ namespace Stream {
 
     Info handleStreamInfoMetadata(std::ifstream &file);
 }
+
+#endif //FLAC_STREAMINFO_H
+

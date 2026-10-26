@@ -7,8 +7,6 @@
 #include <array>
 #include <cstddef>
 
-#endif //FLAC_ENDIANNESS_H
-
 template<typename R, typename T, std::size_t S>
 R fromBigEndianness(std::array<T, S> &array) {
     std::uint64_t value{};
@@ -17,3 +15,5 @@ R fromBigEndianness(std::array<T, S> &array) {
     }
     return value;
 }
+
+#endif //FLAC_ENDIANNESS_H
