@@ -11,5 +11,15 @@ add_executable(flac main.cpp
         vorbis.cpp
         bitsreader.h
         bitsreader.cpp
+        blocksize.h
+        blocksize.cpp
+        samplerate.h
+        samplerate.cpp
+        channels.h
+        channels.cpp
+        bitdepth.cpp
+        bitdepth.h
+        subframetype.cpp
+        subframetype.h
 )
 target_compile_options(flac PRIVATE -O0 -pedantic-errors -Wall -Wextra -Werror)

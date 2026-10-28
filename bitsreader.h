@@ -31,6 +31,7 @@ public:
 
     // n - скільки я хочу зчитати
     std::uint64_t readBits(std::int32_t n);
+    std::int64_t readBitsSigned(std::int32_t n);
     std::int32_t readUnary();
 
     void resetCrc();

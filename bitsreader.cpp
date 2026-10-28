@@ -4,7 +4,7 @@
 
 #include "bitsreader.h"
 
-#include <assert.h>
+#include <cassert>
 #include <iostream>
 
 std::uint64_t calculateMask(const std::size_t fieldSize) {
@@ -76,10 +76,19 @@ std::uint64_t BitsReader::readBits(const std::int32_t n) {
     return rawBits;
 }
 
+std::int64_t BitsReader::readBitsSigned(const std::int32_t n) {
+    auto const raw = readBits(n);
+    const std::int64_t bitsToShift = 64 - n;
+    return static_cast<std::int64_t>(raw << bitsToShift) >> bitsToShift;
+}
+
 std::int32_t BitsReader::readUnary() {
     std::int32_t value{0};
-    while (const auto bit = readBits(1)) {
-        if (bit == 0) value++;
+    auto bit{readBits(1)};
+
+    while (bit != 1) {
+        value++;
+        bit = readBits(1);
     }
 
     return value;
