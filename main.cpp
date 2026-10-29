@@ -5,6 +5,9 @@
 #include <bitset>
 #include <vector>
 #include <bit>
+#include <cmath>
+#include <utility>
+
 #include "bitdepth.h"
 #include "streaminfo.h"
 #include "endianness.h"
@@ -37,6 +40,36 @@ struct Metadata {
     std::uint32_t size{};
 };
 
+enum class CodingMethod {
+    RiceCode4,
+    RiceCode5
+};
+
+struct CodedResidual {
+    CodingMethod method{CodingMethod::RiceCode4};
+    std::int16_t numberOrBits{0};
+};
+
+CodedResidual decodeCodedResidual(const std::uint8_t code) {
+    CodedResidual codedResidual{};
+
+    switch (code) {
+        case 0b00: {
+            codedResidual = {.method = CodingMethod::RiceCode4, .numberOrBits = 4};
+            break;
+        }
+        case 0b01: {
+            codedResidual = {.method = CodingMethod::RiceCode5, .numberOrBits = 5};
+            break;
+        }
+        default: {
+            throw std::invalid_argument("Reserved coded residual");
+        }
+    }
+
+    return codedResidual;
+}
+
 Metadata readNextMetadataBlock(std::ifstream &file) {
     std::array<unsigned char, 4> metadataBytes{};
 
@@ -53,6 +86,33 @@ Metadata readNextMetadataBlock(std::ifstream &file) {
         .nextMetadataBlock = nextMetadataBlock,
         .size = bytes
     };
+}
+
+std::int32_t subframeSideBit(
+    const Frame::Channels &channels,
+    const std::int32_t index
+) {
+    const Frame::Assignment assignment = channels.assignment;
+    std::int32_t sideBit{0};
+
+    switch (assignment) {
+        case Frame::Assignment::LeftSide:
+        case Frame::Assignment::MidSide: {
+            constexpr std::int32_t secondSubframe{1};
+            sideBit = index == secondSubframe ? 1 : 0;
+            break;
+        }
+        case Frame::Assignment::SideRight: {
+            constexpr std::int32_t firstSubframe{0};
+            sideBit = index == firstSubframe ? 1 : 0;
+            break;
+        }
+        case Frame::Assignment::Independent: {
+            sideBit = 0;
+            break;
+        }
+    }
+    return sideBit;
 }
 
 bool readFrame(BitsReader &reader, const Stream::Info &info) {
@@ -171,35 +231,82 @@ bool readFrame(BitsReader &reader, const Stream::Info &info) {
                 static_cast<std::uint16_t>(crcChecksum) << '\n';
     }
 
-    if (const auto subframeMandatoryBit = reader.readBits(1); subframeMandatoryBit != 0) {
-        std::cerr << "Subframe is corrupted " << '\n';
-        return false;
-    }
+    /*
+   * Subframe
+   */
 
-    [[maybe_unused]] const auto subframeTypeCode = reader.readBits(6);
-    [[maybe_unused]] Subframe::Type subframeType{Subframe::decodeSubframeType(subframeTypeCode)};
+    std::vector<std::vector<std::int64_t> > samples(channels.count);
 
-    const auto subframeUsesWastedBits = reader.readBits(1);
-
-    [[maybe_unused]] std::uint32_t wastedBitsCount{0};
-
-    if (subframeUsesWastedBits == 1) {
-        wastedBitsCount = reader.readUnary() + 1;
-    }
-
-    switch (subframeType.kind) {
-        case Subframe::Kind::Constant: {
-            break;
+    for (std::int32_t i = 0; i < channels.count; i++) {
+        if (const auto subframeMandatoryBit = reader.readBits(1); subframeMandatoryBit != 0) {
+            std::cerr << "Subframe is corrupted " << '\n';
+            return false;
         }
-        case Subframe::Kind::Verbatim: {
-            break;
+
+        const auto subframeTypeCode = reader.readBits(6);
+        const auto [kind, predictorOrder]{Subframe::decodeSubframeType(subframeTypeCode)};
+
+        const auto subframeUsesWastedBits = reader.readBits(1);
+
+        std::int32_t wastedBitsCount{0};
+
+        if (subframeUsesWastedBits == 1) {
+            wastedBitsCount = reader.readUnary() + 1;
         }
-        case Subframe::Kind::FixedPredictor: {
-            
-            break;
-        }
-        case Subframe::Kind::LinearPredictor: {
-            break;
+
+        const std::int32_t sampleSize{bitDepth.bitDepth + subframeSideBit(channels, i) - wastedBitsCount};
+
+        switch (kind) {
+            case Subframe::Kind::Constant: {
+                std::int64_t sample = reader.readBitsSigned(sampleSize);
+                samples[i].assign(blockSize.samples, sample);
+                break;
+            }
+            case Subframe::Kind::Verbatim: {
+                for (std::uint32_t j = 0; j < blockSize.samples; j++) {
+                    std::int64_t sample = reader.readBitsSigned(sampleSize);
+                    samples[i].push_back(sample);
+                }
+                break;
+            }
+            case Subframe::Kind::FixedPredictor: {
+                for (std::int32_t j = 0; j < predictorOrder; j++) {
+                    std::int64_t warmUpSample = reader.readBitsSigned(sampleSize);
+                    samples[i].push_back(warmUpSample);
+                }
+                const auto codedResidualCode = reader.readBits(2);
+                const auto [method, numberOrBits]{decodeCodedResidual(codedResidualCode)};
+                auto const partitionOrder = reader.readBits(4);
+                const auto numberOfPartitions{1 << partitionOrder}; // 2^partition order
+                if (blockSize.samples % numberOfPartitions != 0 || std::cmp_less(
+                        blockSize.samples >> partitionOrder, predictorOrder)) {
+                    std::cerr <<
+                            "The partition order MUST be such that the block size is evenly divisible by the number of partitions or The partition order also MUST be such that the (block size >> partition order) is larger than the predictor order"
+                            << '\n';
+                    return false;
+                }
+                for (std::int32_t j = 0; j < numberOfPartitions; j++) {
+                    const std::int64_t numberOfResidualSamples{
+                        ((blockSize.samples >> partitionOrder) - (j == 0 ? predictorOrder : 0))
+                    };
+                    [[maybe_unused]] const auto riceParameter = reader.readBits(numberOrBits);
+
+                    [[maybe_unused]] std::uint64_t residualSampleWidth{0};
+                    // is escape code
+                    if (riceParameter == 0b1111 || riceParameter == 0b11111) {
+                        residualSampleWidth = reader.readBits(5);
+                    }
+
+
+                    for (std::int32_t ps = 0; ps < numberOfResidualSamples; ps++) {
+                    }
+                }
+
+                break;
+            }
+            case Subframe::Kind::LinearPredictor: {
+                break;
+            }
         }
     }
 

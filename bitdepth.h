@@ -14,7 +14,7 @@ namespace Frame {
 
     struct BitDepth {
         BitDepthKind state{BitDepthKind::Known};
-        std::uint32_t bitDepth{0};
+        std::int32_t bitDepth{0};
 
         [[nodiscard]] bool pending() const {
             return state != BitDepthKind::Known;
