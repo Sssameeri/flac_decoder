@@ -17,6 +17,10 @@ namespace Frame {
     struct Channels {
         Assignment assignment{Assignment::Independent};
         std::uint8_t count{0};
+
+        [[nodiscard]] bool needDecorrelation() const {
+            return assignment != Assignment::Independent;
+        }
     };
 
     Channels decodeChannels(std::uint8_t code);

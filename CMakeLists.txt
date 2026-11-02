@@ -21,5 +21,14 @@ add_executable(flac main.cpp
         bitdepth.h
         subframetype.cpp
         subframetype.h
+        residual.h
+        residual.cpp
+        subframe.h
+        subframe.cpp
+        frame.h
+        frame.cpp
+        player.h
+        player.cpp
 )
 target_compile_options(flac PRIVATE -O0 -pedantic-errors -Wall -Wextra -Werror)
+target_link_libraries(flac PRIVATE winmm)

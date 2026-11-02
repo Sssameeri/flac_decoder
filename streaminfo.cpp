@@ -33,7 +33,8 @@ namespace Stream {
         const auto sampleRate = (packedValue >> 44) & 0xFFFFF;
         const auto channels = static_cast<std::uint16_t>(((packedValue >> 41) & 0x7) + 1);
         const auto bitsPerSample = static_cast<std::uint16_t>(((packedValue >> 36) & 0x1F) + 1);
-        const auto numberOfSamples = (packedValue & 0xFFFFFFF); // 74 684 643
+        // total samples is the low 36 bits
+        const auto numberOfSamples = (packedValue & 0xFFFFFFFFF);
 
         return {
             .minBlockSize = minBlockSize,

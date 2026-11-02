@@ -71,7 +71,6 @@ namespace Frame {
             default: {
                 std::cerr << "Sample rate " << code << " is forbidden" << '\n';
                 throw std::invalid_argument("Illegal sample rate");
-                break;
             }
         }
 

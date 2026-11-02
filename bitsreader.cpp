@@ -11,6 +11,13 @@ std::uint64_t calculateMask(const std::size_t fieldSize) {
     return ((1ULL << fieldSize) - 1ULL);
 }
 
+std::int64_t zigZagDecode(const std::uint64_t folded) {
+    if (folded % 2 == 0) {
+        return static_cast<std::int64_t>(folded >> 1);
+    }
+    return -static_cast<std::int64_t>(folded >> 1) - 1;
+}
+
 std::uint8_t crc8Update(std::uint8_t crc, const std::uint8_t &c) {
     crc = crc ^ c;
     for (uint32_t b = 0; b < 8; b++) {
@@ -46,7 +53,8 @@ BitsReader::BitsReader(std::ifstream &file) : file(&file) {
 }
 
 std::uint64_t BitsReader::readBits(const std::int32_t n) {
-    assert(0 < n && n <= 56);
+    if (n == 0) return 0;
+    assert(n <= 56);
 
     std::uint64_t rawBits{};
 
@@ -77,6 +85,7 @@ std::uint64_t BitsReader::readBits(const std::int32_t n) {
 }
 
 std::int64_t BitsReader::readBitsSigned(const std::int32_t n) {
+    if (n == 0) return 0;
     auto const raw = readBits(n);
     const std::int64_t bitsToShift = 64 - n;
     return static_cast<std::int64_t>(raw << bitsToShift) >> bitsToShift;
@@ -97,6 +106,15 @@ std::int32_t BitsReader::readUnary() {
 void BitsReader::resetCrc() {
     crc8 = 0;
     crc16 = 0;
+}
+
+void BitsReader::alignToByte() {
+    if (bitCount % 8 == 0) return;
+    readBits(bitCount % 8);
+}
+
+bool BitsReader::atEnd() const {
+    return bitCount == 0 && file->peek() == std::ifstream::traits_type::eof();
 }
 
 std::uint8_t BitsReader::getCrc8() const {
